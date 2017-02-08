@@ -10,7 +10,8 @@ TODO better support for rgb nonsense
 import re
 import struct
 import copy
-import cStringIO as sio
+#import cStringIO as sio
+from io import StringIO as sio
 import numpy as np
 import warnings
 import lzf
@@ -75,23 +76,23 @@ pcd_type_to_numpy_type = dict((q, p) for (p, q) in numpy_pcd_type_mappings)
 def parse_header(lines):
     metadata = {}
     for ln in lines:
-        if ln.startswith('#') or len(ln) < 2:
+        if ln.startswith(b'#') or len(ln) < 2:
             continue
-        match = re.match('(\w+)\s+([\w\s\.]+)', ln)
+        match = re.match(b'(\w+)\s+([\w\s\.]+)', ln)
         if not match:
             warnings.warn("warning: can't understand line: %s" % ln)
             continue
-        key, value = match.group(1).lower(), match.group(2)
+        key, value = match.group(1).lower().decode("ascii"), match.group(2).decode("ascii")
         if key == 'version':
             metadata[key] = value
         elif key in ('fields', 'type'):
             metadata[key] = value.split()
         elif key in ('size', 'count'):
-            metadata[key] = map(int, value.split())
+            metadata[key] = list(map(int, value.split()))
         elif key in ('width', 'height', 'points'):
             metadata[key] = int(value)
         elif key == 'viewpoint':
-            metadata[key] = map(float, value.split())
+            metadata[key] = list(map(float, value.split()))
         elif key == 'data':
             metadata[key] = value.strip().lower()
         # TODO apparently count is not required?
@@ -140,7 +141,7 @@ DATA {data}
     str_metadata['viewpoint'] = ' '.join(map(str, metadata['viewpoint']))
     str_metadata['points'] = str(metadata['points'])
     tmpl = template.format(**str_metadata)
-    return tmpl
+    return tmpl.encode("ascii")
 
 
 def _metadata_is_consistent(metadata):
@@ -199,9 +200,9 @@ def _build_dtype(metadata):
             fieldnames.append(f)
             typenames.append(np_type)
         else:
-            fieldnames.extend(['%s_%04d' % (f, i) for i in xrange(c)])
+            fieldnames.extend(['%s_%04d' % (f, i) for i in range(c)])
             typenames.extend([np_type]*c)
-    dtype = np.dtype(zip(fieldnames, typenames))
+    dtype = np.dtype(list(zip(fieldnames, typenames)))
     return dtype
 
 
@@ -250,11 +251,11 @@ def parse_binary_compressed_pc_data(f, dtype, metadata):
     if len(buf) != uncompressed_size:
         raise Exception('Error decompressing data')
     # the data is stored field-by-field
-    pc_data = np.zeros(metadata['width'], dtype=dtype)
+    pc_data = np.zeros(metadata['width'] * metadata['height'], dtype=dtype)
     ix = 0
     for dti in range(len(dtype)):
         dt = dtype[dti]
-        bytes = dt.itemsize * metadata['width']
+        bytes = dt.itemsize * metadata['width'] * metadata['height']
         column = np.fromstring(buf[ix:(ix+bytes)], dt)
         pc_data[dtype.names[dti]] = column
         ix += bytes
@@ -268,7 +269,7 @@ def point_cloud_from_fileobj(f):
     while True:
         ln = f.readline().strip()
         header.append(ln)
-        if ln.startswith('DATA'):
+        if ln.startswith(b'DATA'):
             metadata = parse_header(header)
             dtype = _build_dtype(metadata)
             break
@@ -326,7 +327,7 @@ def point_cloud_to_fileobj(pc, fileobj, data_compression=None):
         for fieldname in pc.pc_data.dtype.names:
             column = np.ascontiguousarray(pc.pc_data[fieldname]).tostring('C')
             uncompressed_lst.append(column)
-        uncompressed = ''.join(uncompressed_lst)
+        uncompressed = b''.join(uncompressed_lst)
         uncompressed_size = len(uncompressed)
         # print("uncompressed_size = %r"%(uncompressed_size))
         buf = lzf.compress(uncompressed)
@@ -383,7 +384,7 @@ def save_xyz_label(pc, fname, use_default_lbl=False):
     if not use_default_lbl and ('label' not in md['fields']):
         raise Exception('label is not a field in this point cloud')
     with open(fname, 'w') as f:
-        for i in xrange(pc.points):
+        for i in range(pc.points):
             x, y, z = ['%.4f' % d for d in (
                 pc.pc_data['x'][i], pc.pc_data['y'][i], pc.pc_data['z'][i]
                 )]
@@ -398,7 +399,7 @@ def save_xyz_intensity_label(pc, fname, use_default_lbl=False):
     if 'intensity' not in md['fields']:
         raise Exception('intensity is not a field in this point cloud')
     with open(fname, 'w') as f:
-        for i in xrange(pc.points):
+        for i in range(pc.points):
             x, y, z = ['%.4f' % d for d in (
                 pc.pc_data['x'][i], pc.pc_data['y'][i], pc.pc_data['z'][i]
                 )]
@@ -459,9 +460,9 @@ def add_fields(pc, metadata, pc_data):
             fieldnames.append(f)
             typenames.append(np_type)
         else:
-            fieldnames.extend(['%s_%04d' % (f, i) for i in xrange(c)])
+            fieldnames.extend(['%s_%04d' % (f, i) for i in range(c)])
             typenames.extend([np_type]*c)
-    dtype = zip(fieldnames, typenames)
+    dtype = list(zip(fieldnames, typenames))
     # new dtype. could be inferred?
     new_dtype = [(f, pc.pc_data.dtype[f])
                  for f in pc.pc_data.dtype.names] + dtype
@@ -631,7 +632,7 @@ class PointCloud(object):
             warnings.warn('data_compression keyword is deprecated for'
                           ' compression')
             compression = kwargs['data_compression']
-        with open(fname, 'w') as f:
+        with open(fname, 'wb') as f:
             point_cloud_to_fileobj(self, f, compression)
 
     def save_pcd_to_fileobj(self, fileobj, compression=None, **kwargs):
